@@ -1,0 +1,12 @@
+[package]
+name = "preview"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum = "0.8.9"
+clap.workspace = true
+site.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["fs"] }

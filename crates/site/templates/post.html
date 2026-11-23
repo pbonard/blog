@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title }}{% endblock %}
+{% block content %}
+  <article>
+    <h1>{{ post.title }}</h1>
+    <p class="date"><time datetime="{{ post.date }}">{{ post.long_date() }}</time></p>
+{{ body|safe }}
+  </article>
+{% endblock %}

@@ -1,0 +1,11 @@
+[package]
+name = "draft"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+jiff.workspace = true
+site.workspace = true
+toml = { workspace = true, features = ["display"] }

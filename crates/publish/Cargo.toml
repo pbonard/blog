@@ -1,0 +1,14 @@
+[package]
+name = "publish"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+aws-sdk-s3 = { version = "1.161.0", default-features = false, features = ["default-https-client", "rt-tokio", "http-1x"] }
+clap.workspace = true
+md-5 = "0.11.0"
+serde.workspace = true
+site.workspace = true
+tokio.workspace = true
+toml.workspace = true

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ config.title }}{% endblock %}
+{% block content %}
+  <h1>{{ config.title }}</h1>
+  <p>{{ config.intro }}</p>
+  <table class="posts">
+{% for post in posts %}
+    <tr>
+      <td><time>{{ post.date }}</time></td>
+      <td><a href="/{{ post.slug }}">{{ post.title }}</a>{% if post.draft %} (draft){% endif %}</td>
+    </tr>
+{% endfor %}
+  </table>
+{% endblock %}
