@@ -3,8 +3,8 @@
 A static blog generator.
 
 ```sh  
- # create posts/good.md as a draft
-cargo run -- new good-good "Good Good"
+# create posts/good-good.md as a draft
+cargo run -- new "Good Good"
   
 # preview on http://127.0.0.1:3000, drafts included
 cargo run -p preview
