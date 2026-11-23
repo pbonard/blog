@@ -23,7 +23,6 @@ pub struct Post {
 }
 
 impl Post {
-    /// The file name is the slug, and the slug is the url: posts/numa.md is served at /numa.
     pub(crate) fn load(path: &Path) -> Result<Self> {
         let slug = path
             .file_stem()

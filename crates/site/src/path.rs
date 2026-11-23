@@ -28,7 +28,6 @@ pub fn content_type(path: &str) -> &'static str {
     }
 }
 
-/// A photo or video of a post, with no character that would be encoded in a url.
 pub(crate) fn check_media_name(name: &str) -> Result<()> {
     ensure!(
         !name.starts_with('.')
