@@ -9,7 +9,6 @@ use syntect::{
 
 use crate::path::{check_media_name, content_type};
 
-// Classes instead of inline colours, so one page works in light and dark mode.
 const CLASSES: ClassStyle = ClassStyle::SpacedPrefixed { prefix: "hl-" };
 
 pub struct Highlighter {
@@ -18,7 +17,6 @@ pub struct Highlighter {
 
 impl Default for Highlighter {
     fn default() -> Self {
-        // two-face adds the languages syntect lacks, such as toml, typescript and dockerfile.
         Self {
             syntaxes: two_face::syntax::extra_newlines(),
         }
@@ -26,7 +24,6 @@ impl Default for Highlighter {
 }
 
 impl Highlighter {
-    /// The lines as html, or None when the language is unknown.
     fn highlight(&self, lang: &str, code: &str) -> Result<Option<String>> {
         let Some(syntax) = self.syntaxes.find_syntax_by_token(lang) else {
             return Ok(None);
@@ -51,11 +48,9 @@ impl Highlighter {
 
 pub(crate) struct Body {
     pub html: String,
-    /// The photos and videos the post names without an address, files of media/<slug>/.
     pub media: Vec<String>,
 }
 
-/// A photo or video written as just its file name belongs to the post: latency.webp of numa is /numa/latency.webp.
 pub(crate) fn to_html(markdown: &str, slug: &str, highlighter: &Highlighter) -> Result<Body> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -66,7 +61,6 @@ pub(crate) fn to_html(markdown: &str, slug: &str, highlighter: &Highlighter) -> 
     let mut events = Vec::new();
     let mut media = Vec::new();
     let mut block: Option<(String, String)> = None;
-    // the url of the video being read, and its text
     let mut video: Option<(String, String)> = None;
     for event in Parser::new_ext(markdown, options) {
         if let Some((url, label)) = &mut video {
@@ -139,7 +133,6 @@ pub(crate) fn to_html(markdown: &str, slug: &str, highlighter: &Highlighter) -> 
     Ok(Body { html, media })
 }
 
-/// Not an address, such as https://..., /static/... or data:...
 fn is_file_name(url: &str) -> bool {
     !url.is_empty() && !url.starts_with(['/', '#']) && !url.contains(':')
 }

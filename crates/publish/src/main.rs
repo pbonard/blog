@@ -17,24 +17,22 @@ use md5::{Digest, Md5};
 use serde::Deserialize;
 use site::{Pages, Site, markdown::Highlighter, path::content_type};
 
-/// Render the posts and upload what changed to garage, where the blog is served from
-///
-/// Drafts and their photos stay on this computer. The key is read from upload.toml next to this crate's Cargo.toml,
-/// which git ignores. It's written once from the cluster's secret garage-blog, in the namespace garage.
-// the bucket, its key and its route are in my-infra k8s/bootstrap/garage.yaml
 #[derive(Parser)]
+#[command(about = "Render the posts and make garage, where the blog is served from, the same", long_about = concat!("Render the posts and make garage, where the blog is served from, the same", "\n\n", "The pages are written to a new folder of dist/posts/ first. What changed is uploaded, and what no published post uses any more is deleted, photos and videos included. Drafts and their photos stay on this computer. The key is read from upload.toml next to this crate's Cargo.toml, which git ignores. It's written once from the cluster's secret garage-blog, in the namespace garage."))]
 struct Cli {
-    /// Directory that holds hero.toml, posts/, media/ and static/
-    #[arg(long, default_value = ".")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "Directory that holds hero.toml, posts/ and static/"
+    )]
     root: PathBuf,
-    /// Only print what would be done
-    #[arg(long)]
+    #[arg(long, help = "Only print what would be done")]
     dry_run: bool,
-    /// Take pages offline whose post is gone
-    #[arg(long)]
-    delete: bool,
-    /// Garage's s3 api
-    #[arg(long, default_value = "https://s3.pbonard.com")]
+    #[arg(
+        long,
+        default_value = "https://s3.pbonard.com",
+        help = "Garage's s3 api"
+    )]
     endpoint: String,
     #[arg(long, default_value = "garage")]
     region: String,
@@ -46,7 +44,6 @@ const KEY_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/upload.toml");
 
 const YEAR: &str = "public, max-age=31536000, immutable";
 const HOUR: &str = "public, max-age=3600";
-/// Asked for again each time, and answered with 304 when nothing changed.
 const CHECK: &str = "no-cache";
 
 #[derive(Deserialize)]
@@ -63,36 +60,47 @@ struct Object {
     cache_control: &'static str,
 }
 
-/// The etag of every object online, the md5 of its content.
 type Online = HashMap<String, String>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let site = Site::load(&cli.root, false)?;
-    // an empty posts/ is a mistake more often than a wish
     ensure!(!site.posts.is_empty(), "there's no published post");
     let rendered = site.render(&Highlighter::default())?;
 
     let client = client(&cli, read_credentials(Path::new(KEY_FILE))?);
     let online = list(&client, &cli.bucket).await?;
 
-    // everything is checked before anything is uploaded
-    let media = new_media(&cli.root.join("media"), &rendered.media, &online)?;
-    let objects = objects(rendered.pages);
-    let wanted: BTreeSet<_> = objects.iter().map(|object| object.key.clone()).collect();
+    let media = new_media(&cli.root.join("posts"), &rendered.media, &online)?;
+    let objects = objects(rendered.pages.clone());
+    let wanted: BTreeSet<_> = objects
+        .iter()
+        .map(|object| object.key.clone())
+        .chain(rendered.media)
+        .collect();
     let stale = stale(&online, &wanted);
 
-    // media first and the home page last, so no page ever names something that isn't online
-    let changed = media.into_iter().chain(
-        objects
-            .into_iter()
-            .filter(|object| online.get(&object.key) != Some(&etag(&object.body))),
-    );
-    let mut count = 0;
+    let changed: Vec<_> = media
+        .into_iter()
+        .chain(
+            objects
+                .into_iter()
+                .filter(|object| online.get(&object.key) != Some(&etag(&object.body))),
+        )
+        .collect();
+    if changed.is_empty() && stale.is_empty() {
+        println!("nothing changed, {} posts", site.posts.len());
+        return Ok(());
+    }
+
+    if !cli.dry_run {
+        let dist = site::write(&cli.root, &rendered.pages)?;
+        println!("wrote {}", dist.display());
+    }
+    let count = changed.len();
     for object in changed {
         println!("upload {}", object.key);
-        count += 1;
         if !cli.dry_run {
             let key = object.key.clone();
             upload(&client, &cli.bucket, object)
@@ -100,23 +108,25 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("uploading {key}"))?;
         }
     }
-    if !cli.delete {
-        for key in &stale {
-            println!("still online without a post: {key}, take it offline with --delete");
-        }
-    } else if !stale.is_empty() {
-        for key in &stale {
-            println!("delete {key}");
-        }
-        if !cli.dry_run {
-            delete(&client, &cli.bucket, &stale).await?;
-        }
+    for key in &stale {
+        println!("delete {key}");
     }
-    println!("{count} changed, {} posts", site.posts.len());
+    if !cli.dry_run && !stale.is_empty() {
+        delete(&client, &cli.bucket, &stale).await?;
+    }
+    println!(
+        "{}{count} uploaded, {} deleted, {} posts",
+        if cli.dry_run {
+            "dry run, nothing changed: "
+        } else {
+            ""
+        },
+        stale.len(),
+        site.posts.len()
+    );
     Ok(())
 }
 
-/// The pages as they are named online: numa.html is numa, the address of a post.
 fn objects(pages: Pages) -> Vec<Object> {
     let mut objects: Vec<_> = pages
         .into_iter()
@@ -128,7 +138,6 @@ fn objects(pages: Pages) -> Vec<Object> {
                 _ => path.clone(),
             };
             let cache_control = match key.as_str() {
-                // linked with a hash of its content
                 "static/style.css" => YEAR,
                 key if key.starts_with("static/") => HOUR,
                 _ => CHECK,
@@ -149,7 +158,6 @@ fn objects(pages: Pages) -> Vec<Object> {
     objects
 }
 
-/// The photos and videos that aren't online yet.
 fn new_media(dir: &Path, media: &BTreeSet<String>, online: &Online) -> Result<Vec<Object>> {
     let mut new = Vec::new();
     let mut problems = Vec::new();
@@ -157,7 +165,7 @@ fn new_media(dir: &Path, media: &BTreeSet<String>, online: &Online) -> Result<Ve
         let file = dir.join(key);
         if !file.is_file() {
             if !online.contains_key(key) {
-                problems.push(format!("media/{key} is missing"));
+                problems.push(format!("posts/{key} is missing"));
             }
             continue;
         }
@@ -169,9 +177,8 @@ fn new_media(dir: &Path, media: &BTreeSet<String>, online: &Online) -> Result<Ve
                 key: key.clone(),
                 body,
             }),
-            // browsers keep a file for a year, so its content must never change under the same url
             Some(online) if *online != etag(&body) => {
-                problems.push(format!("media/{key} changed, use another name"));
+                problems.push(format!("posts/{key} changed, use another name"));
             }
             Some(_) => {}
         }
@@ -180,11 +187,9 @@ fn new_media(dir: &Path, media: &BTreeSet<String>, online: &Online) -> Result<Ve
     Ok(new)
 }
 
-/// The pages and static files online that the site no longer has. Photos and videos, <slug>/<file>, are kept.
 fn stale(online: &Online, wanted: &BTreeSet<String>) -> BTreeSet<String> {
     online
         .keys()
-        .filter(|key| !key.contains('/') || key.starts_with("static/"))
         .filter(|key| !wanted.contains(*key))
         .cloned()
         .collect()
@@ -222,7 +227,6 @@ async fn upload(client: &Client, bucket: &str, object: Object) -> Result<()> {
         .key(object.key)
         .content_type(object.content_type)
         .cache_control(object.cache_control)
-        // whole, so the signature covers the content. garage rejects the signature of the sdk's streamed files
         .body(ByteStream::from(object.body))
         .send()
         .await
@@ -230,7 +234,6 @@ async fn upload(client: &Client, bucket: &str, object: Object) -> Result<()> {
     Ok(())
 }
 
-/// With one POST: s3.pbonard.com takes no DELETE.
 async fn delete(client: &Client, bucket: &str, keys: &BTreeSet<String>) -> Result<()> {
     let objects = keys
         .iter()
@@ -253,7 +256,6 @@ async fn delete(client: &Client, bucket: &str, keys: &BTreeSet<String>) -> Resul
     Ok(())
 }
 
-/// What garage answered, or why it couldn't be reached.
 fn describe<E>(error: &SdkError<E>) -> String
 where
     E: ProvideErrorMetadata + std::error::Error + 'static,
@@ -279,7 +281,6 @@ where
 }
 
 fn client(cli: &Cli, credentials: Credentials) -> Client {
-    // nothing is read from ~/.aws or the AWS_ environment, so the keys of an aws profile are never used
     let config = aws_sdk_s3::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .endpoint_url(&cli.endpoint)
@@ -290,11 +291,9 @@ fn client(cli: &Cli, credentials: Credentials) -> Client {
     Client::from_conf(config)
 }
 
-// not the AWS_ environment or ~/.aws: those keys belong to aws and must not reach garage
 fn read_credentials(path: &Path) -> Result<Credentials> {
     let text = fs::read_to_string(path)
         .with_context(|| format!("reading the key in {}", path.display()))?;
-    // only the message: the whole error quotes the line, which can be the secret
     let key: Key = toml::from_str(&text)
         .map_err(|error| anyhow!("{}: {}", path.display(), error.message()))?;
     ensure!(
@@ -396,17 +395,19 @@ mod tests {
     }
 
     #[test]
-    fn only_pages_go_stale() {
+    fn everything_unused_goes_stale() {
         let online = online(&[
             ("numa", ""),
+            ("numa/used.png", ""),
+            ("numa/unused.png", ""),
             ("old", ""),
-            ("static/old.ico", ""),
             ("old/photo.png", ""),
+            ("static/old.ico", ""),
             ("index.html", ""),
         ]);
         assert_eq!(
-            stale(&online, &set(&["numa", "index.html"])),
-            set(&["old", "static/old.ico"])
+            stale(&online, &set(&["numa", "numa/used.png", "index.html"])),
+            set(&["numa/unused.png", "old", "old/photo.png", "static/old.ico"])
         );
     }
 

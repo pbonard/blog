@@ -209,6 +209,5 @@ raw-secret*.yaml
 # the garage key of crates/publish
 /crates/publish/upload.toml
 
-# photos and videos, they are kept in garage
-/media/
+# markdown, photos and videos, not kept in git
 /posts/

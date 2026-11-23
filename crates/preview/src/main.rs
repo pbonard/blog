@@ -15,8 +15,11 @@ use tower_http::services::ServeFile;
 #[derive(Parser)]
 #[command(about = "Preview the site, drafts included; every request renders from disk")]
 struct Cli {
-    /// Directory that holds hero.toml, posts/, media/ and static/
-    #[arg(long, default_value = ".")]
+    #[arg(
+        long,
+        default_value = ".",
+        help = "Directory that holds hero.toml, posts/ and static/"
+    )]
     root: PathBuf,
     #[arg(long, default_value_t = 3000)]
     port: u16,
@@ -43,7 +46,6 @@ async fn main() -> Result<()> {
 
 enum Found {
     Page(String, Vec<u8>),
-    /// A photo or video a post shows, straight from media/.
     Media(PathBuf),
     Nothing,
 }
@@ -56,7 +58,6 @@ async fn page(State(preview): State<Arc<Preview>>, request: Request) -> Response
         Ok(Ok(Found::Page(key, body))) => {
             ([(header::CONTENT_TYPE, content_type(&key))], body).into_response()
         }
-        // answers range requests too, safari plays no video without them
         Ok(Ok(Found::Media(file))) => match ServeFile::new(file).try_call(request).await {
             Ok(response) => response.map(Body::new),
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
@@ -79,14 +80,12 @@ fn find(preview: &Preview, path: &str) -> Result<Found> {
     {
         return Ok(Found::Page(key, body));
     }
-    // only what a post names, so a path can't leave media/
     match path.strip_prefix('/') {
-        Some(key) if media.contains(key) => Ok(Found::Media(preview.root.join("media").join(key))),
+        Some(key) if media.contains(key) => Ok(Found::Media(preview.root.join("posts").join(key))),
         _ => Ok(Found::Nothing),
     }
 }
 
-/// The file of a url path: / is index.html, and /numa is numa.html.
 fn find_key(path: &str, exists: impl Fn(&str) -> bool) -> Option<String> {
     let name = match path.strip_prefix('/')? {
         "" => "index.html",

@@ -1,5 +1,3 @@
-//! What draft, preview and publish share: the posts, and the pages made of them.
-
 pub mod markdown;
 pub mod path;
 pub mod post;
@@ -9,7 +7,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     hash::{DefaultHasher, Hasher},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
@@ -18,12 +16,10 @@ use serde::Deserialize;
 
 use crate::{markdown::Highlighter, post::Post};
 
-/// Rendered files by their path, numa.html or static/style.css.
 pub type Pages = BTreeMap<String, Vec<u8>>;
 
 pub struct Rendered {
     pub pages: Pages,
-    /// The photos and videos the posts show, <slug>/<file>. The files are in media/.
     pub media: BTreeSet<String>,
 }
 
@@ -37,7 +33,6 @@ struct Config {
 
 pub struct Site {
     config: Config,
-    /// Newest first.
     pub posts: Vec<Post>,
     statics: Pages,
 }
@@ -84,13 +79,11 @@ impl Site {
                 }
             }
         }
-        // The slug keeps the order of two posts of one day the same on every build.
         posts.sort_by(|a, b| (Reverse(a.date), &a.slug).cmp(&(Reverse(b.date), &b.slug)));
 
         let mut statics = Pages::new();
         collect(&root.join("static"), "static/", &mut statics)?;
         let mut css = Highlighter::css()?.into_bytes();
-        // After the theme, so style.css has the last word.
         css.extend(
             statics
                 .remove("static/style.css")
@@ -107,7 +100,6 @@ impl Site {
 
     pub fn render(&self, highlighter: &Highlighter) -> Result<Rendered> {
         let mut pages = self.statics.clone();
-        // The hash changes with the content, so the stylesheet can be cached forever.
         let css = format!(
             "/static/style.css?v={}",
             hash(&self.statics["static/style.css"])
@@ -147,7 +139,24 @@ impl Site {
     }
 }
 
-/// Every file below dir by its path after prefix, hidden ones left out.
+pub fn write(root: &Path, pages: &Pages) -> Result<PathBuf> {
+    let time = jiff::ZonedDateTime::now()
+        .strftime("%Y-%m-%d_%H-%M-%S")
+        .to_string();
+    let dist = root.join("dist/posts");
+    fs::create_dir_all(&dist)?;
+    let dist = dist.join(time);
+    fs::create_dir(&dist).with_context(|| format!("creating {}", dist.display()))?;
+    for (path, body) in pages {
+        let target = dist.join(path);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&target, body).with_context(|| format!("writing {}", target.display()))?;
+    }
+    Ok(dist)
+}
+
 fn collect(dir: &Path, prefix: &str, out: &mut Pages) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let entry = entry?;
