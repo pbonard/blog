@@ -32,6 +32,7 @@
   --link: #0b57b0;
   --background: #fdfdfc;
   --code: #f3f3f0;
+  --stripe: #f4f4f4;
   --code-box: #f5f2f0;
   --code-border: #bebebe;
   --line: #deded9;
@@ -44,6 +45,7 @@
     --link: #86b6f2;
     --background: #17191c;
     --code: #22252a;
+    --stripe: #22252a;
     --code-box: #22252a;
     --code-border: #4d525a;
     --line: #363a40;
@@ -63,7 +65,7 @@ body {
   overflow-wrap: break-word;
 }
 
-h1, h2, h3, h4 { margin: 0; }
+h1, h2, h3, h4 { margin: 0; font-weight: 400; }
 /* a title of two lines needs a taller line, the margins take the difference back */
 h1 { font-size: 1.8rem; line-height: 2.25rem; margin: -0.39rem 0 0.51rem; }
 h2 { font-size: 1.3rem; }
@@ -79,9 +81,11 @@ ul { margin: 0 0 1rem 2rem; padding: 0; }
 ol { margin: 0 0 1rem 1rem; padding: 0; }
 li > ul, li > ol { margin-bottom: 0; }
 
-.posts { border-collapse: collapse; margin-bottom: 1rem; }
+.posts { border-collapse: collapse; min-width: min(100%, 34.53rem); margin-bottom: 1rem; }
 .posts td { padding: 0 1rem 0 0; vertical-align: baseline; }
-.posts td:first-child { white-space: nowrap; }
+/* as narrow as a date, the titles take the rest of the width */
+.posts td:first-child { width: 1px; white-space: nowrap; }
+.posts tr:nth-child(even) { background: var(--stripe); }
 .posts time { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 code, pre { font-family: "Roboto Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 1em; }
