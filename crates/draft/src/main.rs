@@ -29,14 +29,14 @@ enum Command {
     #[command(
         about = "Create posts/<slug>.md as a draft, and posts/<slug>/ for its photos and videos"
     )]
-    New { slug: String, title: String },
+    New { title: String },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Build => build(&cli.root),
-        Command::New { slug, title } => new_post(&cli.root, &slug, &title),
+        Command::New { title } => new_post(&cli.root, &slug_of(&title)?, &title),
     }
 }
 
@@ -52,6 +52,21 @@ fn build(root: &Path) -> Result<()> {
         dist.display()
     );
     Ok(())
+}
+
+fn slug_of(title: &str) -> Result<String> {
+    let slug = title
+        .replace(['\'', '’'], "")
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_ascii_lowercase();
+    ensure!(
+        !slug.is_empty(),
+        "{title:?} has no a-z or 0-9 to make the file name from"
+    );
+    Ok(slug)
 }
 
 fn new_post(root: &Path, slug: &str, title: &str) -> Result<()> {
@@ -75,6 +90,23 @@ fn new_post(root: &Path, slug: &str, title: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn makes_the_slug_from_the_title() {
+        for (title, slug) in [
+            ("Good Good", "good-good"),
+            ("NUMA Cost & Performance", "numa-cost-performance"),
+            ("  Don't use div(3)!  ", "dont-use-div-3"),
+            ("std::lower_bound", "std-lower-bound"),
+            ("Rust 시작하기 2", "rust-2"),
+        ] {
+            assert_eq!(slug_of(title).unwrap(), slug, "{title}");
+            post::check_slug(slug).unwrap();
+        }
+        for title in ["", "첫 번째 글", "!!!"] {
+            assert!(slug_of(title).is_err(), "{title}");
+        }
+    }
 
     #[test]
     fn makes_the_post_and_its_media_folder() {
