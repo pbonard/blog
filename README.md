@@ -1,6 +1,6 @@
 # blog
 
-A static blog generator.
+Static blog html generator and file uploader which support preview server.
 
 ```sh  
 # create posts/good-good.md as a draft
@@ -13,6 +13,7 @@ cargo run -p preview
 cargo run -p publish
 ```
 
-- Posts are markdown files in `posts/`, and the file name is the url: `posts/good.md` becomes `/good`.
+- Posts are markdown files in `posts/`, and the file name is the url: `posts/good.md` becomes `/good`
+- Put media file in `posts/good/` and attach in markdown with only its filename without path, like `![My desk](photo.png)`.
 - Remove `draft = true` from a post to publish it.
 - The site's title and author are in `hero.toml`.
