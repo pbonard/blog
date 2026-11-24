@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use askama::Template;
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use crate::{markdown::Highlighter, post::Post};
@@ -105,22 +106,26 @@ impl Site {
             hash(&self.statics["static/style.css"])
         );
 
+        let bodies = self
+            .posts
+            .par_iter()
+            .map(|post| {
+                let body = markdown::to_html(&post.markdown, &post.slug, highlighter)
+                    .with_context(|| post.slug.clone())?;
+                let page = PostPage {
+                    config: &self.config,
+                    css: &css,
+                    post,
+                    body: &body.html,
+                };
+                Ok((post, page.render()?, body.media))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let mut media = BTreeSet::new();
-        for post in &self.posts {
-            let body = markdown::to_html(&post.markdown, &post.slug, highlighter)
-                .with_context(|| post.slug.clone())?;
-            media.extend(
-                body.media
-                    .iter()
-                    .map(|name| format!("{}/{name}", post.slug)),
-            );
-            let page = PostPage {
-                config: &self.config,
-                css: &css,
-                post,
-                body: &body.html,
-            };
-            pages.insert(format!("{}.html", post.slug), page.render()?.into_bytes());
+        for (post, page, names) in bodies {
+            media.extend(names.iter().map(|name| format!("{}/{name}", post.slug)));
+            pages.insert(format!("{}.html", post.slug), page.into_bytes());
         }
 
         let index = IndexPage {

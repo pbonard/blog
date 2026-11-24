@@ -16,6 +16,7 @@ use clap::Parser;
 use md5::{Digest, Md5};
 use serde::Deserialize;
 use site::{Pages, Site, markdown::Highlighter, path::content_type};
+use tokio::task::JoinSet;
 
 #[derive(Parser)]
 #[command(about = "Render the posts and make garage, where the blog is served from, the same", long_about = concat!("Render the posts and make garage, where the blog is served from, the same", "\n\n", "The pages are written to a new folder of dist/posts/ first. What changed is uploaded, and what no published post uses any more is deleted, photos and videos included. Drafts and their photos stay on this computer. The key is read from upload.toml next to this crate's Cargo.toml, which git ignores. It's written once from the cluster's secret garage-blog, in the namespace garage."))]
@@ -45,6 +46,8 @@ const KEY_FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/upload.toml");
 const YEAR: &str = "public, max-age=31536000, immutable";
 const HOUR: &str = "public, max-age=3600";
 const CHECK: &str = "no-cache";
+
+const UPLOADS: usize = 8;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,13 +102,12 @@ async fn main() -> Result<()> {
         println!("wrote {}", dist.display());
     }
     let count = changed.len();
-    for object in changed {
-        println!("upload {}", object.key);
+    for objects in steps(changed) {
+        for object in &objects {
+            println!("upload {}", object.key);
+        }
         if !cli.dry_run {
-            let key = object.key.clone();
-            upload(&client, &cli.bucket, object)
-                .await
-                .with_context(|| format!("uploading {key}"))?;
+            upload_all(&client, &cli.bucket, objects).await?;
         }
     }
     for key in &stale {
@@ -128,7 +130,7 @@ async fn main() -> Result<()> {
 }
 
 fn objects(pages: Pages) -> Vec<Object> {
-    let mut objects: Vec<_> = pages
+    pages
         .into_iter()
         .map(|(path, body)| {
             let key = match path.strip_suffix(".html") {
@@ -149,13 +151,20 @@ fn objects(pages: Pages) -> Vec<Object> {
                 body,
             }
         })
-        .collect();
-    objects.sort_by_key(|object| match object.key.as_str() {
-        key if key.starts_with("static/") => 0,
-        "index.html" => 2,
-        _ => 1,
-    });
-    objects
+        .collect()
+}
+
+fn steps(objects: Vec<Object>) -> [Vec<Object>; 3] {
+    let mut steps: [Vec<Object>; 3] = Default::default();
+    for object in objects {
+        let step = match object.key.as_str() {
+            "index.html" => 2,
+            key if key.contains('/') => 0,
+            _ => 1,
+        };
+        steps[step].push(object);
+    }
+    steps
 }
 
 fn new_media(dir: &Path, media: &BTreeSet<String>, online: &Online) -> Result<Vec<Object>> {
@@ -218,6 +227,28 @@ async fn list(client: &Client, bucket: &str) -> Result<Online> {
         }
     }
     Ok(online)
+}
+
+async fn upload_all(client: &Client, bucket: &str, objects: Vec<Object>) -> Result<()> {
+    let mut uploads = JoinSet::new();
+    for object in objects {
+        if uploads.len() == UPLOADS
+            && let Some(done) = uploads.join_next().await
+        {
+            done??;
+        }
+        let (client, bucket) = (client.clone(), bucket.to_owned());
+        uploads.spawn(async move {
+            let key = object.key.clone();
+            upload(&client, &bucket, object)
+                .await
+                .with_context(|| format!("uploading {key}"))
+        });
+    }
+    while let Some(done) = uploads.join_next().await {
+        done??;
+    }
+    Ok(())
 }
 
 async fn upload(client: &Client, bucket: &str, object: Object) -> Result<()> {
@@ -326,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn pages_are_named_by_their_address_and_the_home_page_is_last() {
+    fn pages_are_named_by_their_address() {
         let pages = [
             "404.html",
             "index.html",
@@ -345,12 +376,12 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "404.html",
+                "index.html",
+                "numa",
                 "static/a.html",
                 "static/favicon.ico",
-                "static/style.css",
-                "404.html",
-                "numa",
-                "index.html"
+                "static/style.css"
             ]
         );
         assert!(
@@ -363,6 +394,39 @@ mod tests {
             objects
                 .iter()
                 .any(|o| o.key == "static/style.css" && o.cache_control == YEAR)
+        );
+    }
+
+    #[test]
+    fn media_is_uploaded_first_and_the_home_page_last() {
+        let keys = [
+            "index.html",
+            "numa",
+            "numa/a.png",
+            "404.html",
+            "static/b.css",
+        ];
+        let objects = keys
+            .iter()
+            .map(|key| Object {
+                key: key.to_string(),
+                body: Vec::new(),
+                content_type: "",
+                cache_control: "",
+            })
+            .collect();
+        let steps = steps(objects).map(|step| {
+            step.into_iter()
+                .map(|object| object.key)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            steps,
+            [
+                vec!["numa/a.png", "static/b.css"],
+                vec!["numa", "404.html"],
+                vec!["index.html"]
+            ]
         );
     }
 
