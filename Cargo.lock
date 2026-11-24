@@ -1572,6 +1572,7 @@ dependencies = [
  "anyhow",
  "aws-sdk-s3",
  "clap",
+ "futures-util",
  "md-5",
  "serde",
  "site",
