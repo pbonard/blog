@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -13,10 +14,11 @@ use aws_sdk_s3::{
     types::{Delete, ObjectIdentifier},
 };
 use clap::Parser;
+use futures_util::{TryStreamExt, stream};
 use md5::{Digest, Md5};
 use serde::Deserialize;
 use site::{Pages, Site, markdown::Highlighter, path::content_type};
-use tokio::task::JoinSet;
+use tokio::time::timeout;
 
 #[derive(Parser)]
 #[command(about = "Render the posts and make garage, where the blog is served from, the same", long_about = concat!("Render the posts and make garage, where the blog is served from, the same", "\n\n", "The pages are written to a new folder of dist/posts/ first. What changed is uploaded, and what no published post uses any more is deleted, photos and videos included. Drafts and their photos stay on this computer. The key is read from upload.toml next to this crate's Cargo.toml, which git ignores. It's written once from the cluster's secret garage-blog, in the namespace garage."))]
@@ -48,6 +50,8 @@ const HOUR: &str = "public, max-age=3600";
 const CHECK: &str = "no-cache";
 
 const UPLOADS: usize = 8;
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const PUBLISH_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -102,14 +106,20 @@ async fn main() -> Result<()> {
         println!("wrote {}", dist.display());
     }
     let count = changed.len();
-    for objects in steps(changed) {
-        for object in &objects {
-            println!("upload {}", object.key);
+    let uploads = async {
+        for objects in steps(changed) {
+            for object in &objects {
+                println!("upload {}", object.key);
+            }
+            if !cli.dry_run {
+                upload_all(&client, &cli.bucket, objects).await?;
+            }
         }
-        if !cli.dry_run {
-            upload_all(&client, &cli.bucket, objects).await?;
-        }
-    }
+        anyhow::Ok(())
+    };
+    timeout(PUBLISH_TIMEOUT, uploads)
+        .await
+        .with_context(|| format!("all uploads took longer than {PUBLISH_TIMEOUT:?}"))??;
     for key in &stale {
         println!("delete {key}");
     }
@@ -230,25 +240,16 @@ async fn list(client: &Client, bucket: &str) -> Result<Online> {
 }
 
 async fn upload_all(client: &Client, bucket: &str, objects: Vec<Object>) -> Result<()> {
-    let mut uploads = JoinSet::new();
-    for object in objects {
-        if uploads.len() == UPLOADS
-            && let Some(done) = uploads.join_next().await
-        {
-            done??;
-        }
-        let (client, bucket) = (client.clone(), bucket.to_owned());
-        uploads.spawn(async move {
+    stream::iter(objects.into_iter().map(Ok))
+        .try_for_each_concurrent(UPLOADS, |object| async move {
             let key = object.key.clone();
-            upload(&client, &bucket, object)
+            timeout(UPLOAD_TIMEOUT, upload(client, bucket, object))
                 .await
+                .with_context(|| format!("took longer than {UPLOAD_TIMEOUT:?}"))
+                .flatten()
                 .with_context(|| format!("uploading {key}"))
-        });
-    }
-    while let Some(done) = uploads.join_next().await {
-        done??;
-    }
-    Ok(())
+        })
+        .await
 }
 
 async fn upload(client: &Client, bucket: &str, object: Object) -> Result<()> {
